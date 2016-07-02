@@ -1,0 +1,192 @@
+<?xml version="1.0"?>
+<openerp>
+    <data>
+
+
+    <!-- Firmante - Formulario de creacion -->
+
+    <record id="prestamo_tipo_tree" model="ir.ui.view">
+        <field name="name">prestamo.tipo.tree</field>
+        <field name="model">prestamo.tipo</field>
+        <field name="arch" type="xml">
+            <tree string="Tipos">
+                <field name="name"/>
+                <field name="active"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="prestamo_tipo_form" model="ir.ui.view">
+        <field name="name">prestamo.tipo.form</field>
+        <field name="model">prestamo.tipo</field>
+        <field name="arch" type="xml">
+            <form string="Formulario prestamo tipos" editable="bottom">
+                <header>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="active"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="prestamo_tipo_action" model="ir.actions.act_window">
+        <field name="name">Tipo de prestamo</field>
+        <field name="res_model">prestamo.tipo</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_id" ref="prestamo_tipo_tree"/>
+    </record>
+
+
+    <!-- Plan - Formularios de creacion  -->
+
+        <record id="prestamo_plan_tree" model="ir.ui.view">
+        <field name="name">prestamo.plan.tree</field>
+        <field name="model">prestamo.plan</field>
+        <field name="arch" type="xml">
+            <tree string="Planes de prestamos">
+                <field name="name"/>
+                <field name="codigo"/>
+                <field name="tipo"/>
+                <field name="active"/>
+                <field name="recibo_de_sueldo"/>
+                <field name="cuotas"/>
+                <field name="tasa_de_interes"/>
+                <field name="tasa_de_punitorios"/>
+                <field name="dias_de_gracia_punitorios"/>
+                <field name="dias_entre_vencimientos"/>
+                <field name="proporcional_primer_cuota"/>
+                <field name="tipo_de_amortizacion"/>
+                <field name="dia_diferimiento_cuota"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="prestamo_plan_form" model="ir.ui.view">
+        <field name="name">prestamo.plan.form</field>
+        <field name="model">prestamo.plan</field>
+        <field name="arch" type="xml">
+            <form string="Plan de pagos para prestamo" editable="bottom">
+                <header>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="codigo"/>
+                        <field name="tipo"/>
+                        <field name="active"/>
+                        <field name="recibo_de_sueldo"/>
+                        <field name="cuotas"/>
+                        <field name="tasa_de_interes"/>
+                        <field name="tasa_de_punitorios"/>
+                        <field name="dias_de_gracia_punitorios"/>
+                        <field name="dias_entre_vencimientos"/>
+                        <field name="proporcional_primer_cuota"/>
+                        <field name="tipo_de_amortizacion"/>
+                        <field name="dia_diferimiento_cuota"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="prestamo_plan_action" model="ir.actions.act_window">
+        <field name="name">Plan del prestamo</field>
+        <field name="res_model">prestamo.plan</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_id" ref="prestamo_plan_tree"/>
+    </record>
+
+
+
+     <!-- Cuenta - Formularios de creacion  -->
+
+        <record id="prestamo_cuenta_tree" model="ir.ui.view">
+        <field name="name">prestamo.cuenta.tree</field>
+        <field name="model">prestamo.cuenta</field>
+        <field name="arch" type="xml">
+            <tree string="Cuentas">
+                <field name="name"/>
+                <field name="cliente_id"/>
+                <field name="limite_credito"/>
+                <field name="ingresos_comprobables"/>
+                <field name="especificacion_laboral"/>
+                <field name="active"/>
+                <field name="Saldo"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="prestamo_cuenta_form" model="ir.ui.view">
+        <field name="name">prestamo.cuenta.form</field>
+        <field name="model">prestamo.cuenta</field>
+        <field name="arch" type="xml">
+            <form string="Cuenta" editable="bottom">
+                <header>
+                    <group>
+                        <button name="activar" string="Confirmar" status="borrador" type="object" />
+                        <button name="nuevo_prestamo" string="Nuevo Prestamo" type="object" />
+                        <field name="Saldo"/>
+                    </group>
+                    <field name="state" widget="statusbar"/>
+                    
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="cliente_id"/>
+                        <field name="especificacion_laboral"/>
+                        <field name="recibo_de_sueldo"/>
+                        <field name="limite_credito"/>
+                        <field name="ingresos_comprobables"/>
+                        <field name="fecha_inicio_trabajo_actual"/>
+                        <field name="active"/>
+                    </group>
+                    <notebook>
+                        <page string="Prestamos">
+                            <field name="prestamo_prestamo_ids"/>
+                        </page>
+                        <page string="Recibos">
+                            <field name="prestamo_recibo_ids"/>
+                        </page>
+                        <page string="Observaciones">
+                            <field name="prestamo_observacion_ids"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="prestamo_cuenta_action" model="ir.actions.act_window">
+        <field name="name">Cuenta</field>
+        <field name="res_model">prestamo.cuenta</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_id" ref="prestamo_cuenta_tree"/>
+    </record>
+
+
+    <!-- Menu Principal del modulo (barra superior) - Prestamos  -->
+    <menuitem id="menu_prestamos" name="Prestamos" />
+
+    <!-- SubMenu Prestamos -->
+    <menuitem id="submenu_prestamos" name="Prestamos" parent="menu_prestamos" sequence="0" />
+
+    <!-- SubMenu Cuentas -->
+    <menuitem id="submenu_cuentas_action" name="Cuentas" parent="submenu_prestamos" action="prestamo_cuenta_action"  sequence="0" />
+
+    <!-- SubMenu Prestamos 
+    <menuitem id="submenu_prestamos_action" name="Prestamos" parent="submenu_prestamos" action="prestamo_"  sequence="0" />
+    -->
+
+    <!-- SubMenu Configuracion  -->
+    <menuitem id="submenu_prestamos_configuracion" name="Configuracion" parent="menu_prestamos"  sequence="1" />
+    <menuitem id="submenu_plan_action" name="Planes" parent="submenu_prestamos_configuracion" action="prestamo_plan_action"  sequence="0" />
+
+    <menuitem id="submenu_tipo_action" name="Tipos de creditos" parent="submenu_prestamos_configuracion" action="prestamo_tipo_action"  sequence="1" />
+
+    </data>
+</openerp>

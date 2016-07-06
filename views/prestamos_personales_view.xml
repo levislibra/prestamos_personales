@@ -174,7 +174,22 @@
                             </field>
                         </page>
                         <page string="Recibos">
-                            <field name="prestamo_recibo_ids"/>
+                            <field name="prestamo_recibo_ids">
+                                <tree string="Recibos">
+                                        <field name="fecha"/>
+                                        <field name="monto"/>
+                                </tree>
+                                <form string="Recibo" editable="bottom">
+                                    <header>
+                                    </header>
+                                    <sheet>
+                                        <group>
+                                            <field name="fecha"/>
+                                            <field name="monto"/>
+                                        </group>
+                                    </sheet>
+                                </form>
+                            </field>
                         </page>
                         <page string="Observaciones">
                             <field name="prestamo_observacion_ids"/>
@@ -191,6 +206,36 @@
         <field name="view_mode">tree,form</field>
         <field name="view_id" ref="prestamo_cuenta_tree"/>
     </record>
+
+    <record id="add_more_action" model="ir.actions.act_window">
+        <field name="name">Cuotas pendientes</field>
+        <field name="type">ir.actions.act_window</field>
+        <field name="res_model">prestamo.cuenta</field>
+        <field name="view_type">form</field>
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="prestamo_cuenta_action"/>
+        <field name="target">new</field>
+        <field name="multi">True</field>
+    </record>
+
+    <act_window name="Cuotas pendientes"
+    res_model="prestamo.cuota"
+    src_model="prestamo.cuenta"
+    key2="client_action_multi" 
+    view_mode="tree" target="current" 
+    view_id="prestamo_cuota_tree"
+    id="cuotas_pendientes_action" 
+    domain="[('prestamo_prestamo_id.prestamo_cuenta_id', '=', active_id), ('state', '!=', 'borrador')]"/>
+
+    <act_window
+    id="cobrar_cuotas_action"
+    name="Cobrar cuotas"
+    res_model="prestamo.recibo"
+    src_model="prestamo.cuota"
+    view_mode="form"
+    multi="True"
+    target="new"
+    key2="client_action_multi"/>
 
     <!-- Prestamos - Formularios de creacion  -->
 
@@ -326,6 +371,46 @@
         <field name="res_model">prestamo.cuota</field>
         <field name="view_mode">tree,form</field>
         <field name="view_id" ref="prestamo_cuota_tree"/>
+    </record>
+
+    <!-- Recibo - Formulario de creacion -->
+
+    <record id="prestamo_recibo_tree" model="ir.ui.view">
+        <field name="name">prestamo.recibo.tree</field>
+        <field name="model">prestamo.recibo</field>
+        <field name="arch" type="xml">
+            <tree string="Recibos">
+                <field name="fecha"/>
+                <field name="monto"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="prestamo_recibo_form" model="ir.ui.view">
+        <field name="name">prestamo.recibo.form</field>
+        <field name="model">prestamo.recibo</field>
+        <field name="arch" type="xml">
+            <form string="Recibo" editable="bottom">
+                <header>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="journal_id" widget="selection"/>
+                            <field name="monto"/>
+                        </group>
+                        <group>
+                            <field name="fecha"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Cuotas a cobrar">
+                            <field name="prestamo_cuota_ids" readonly="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
     </record>
 
 

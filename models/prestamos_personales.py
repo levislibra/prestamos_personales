@@ -91,6 +91,7 @@ class prestamo_cuota(osv.Model):
 
         'ultima_fecha_cobro_cuota': fields.date("Ultima fecha de cobro"),
         'prestamo_prestamo_id': fields.many2one("prestamo.prestamo", "Prestamo"),
+        'prestamo_recibo_id': fields.many2one("prestamo.recibo", "Recibo"),
 
         #Para visualizar cuotas pendientes en prestamo.cuenta
         'cuenta_id': fields.many2one("prestamo.cuenta", "Cuenta"),
@@ -202,13 +203,62 @@ class prestamo_obseracion(osv.Model):
 class prestamo_recibo(osv.Model):
     _name = 'prestamo.recibo'
     _description = 'Informacion de recibos'
+    _rec_name="id"
     _columns = {
         'id': fields.integer("ID", readonly=True),
         'fecha': fields.date("Fecha", required=True),
         'monto': fields.float("Monto", required=True),
-        'prestamo_cuota_id': fields.many2one("prestamo.cuota", "Cuota", required=True),
+        'journal_id': fields.many2one('account.journal', string="Metodo de Cobro", required=True, domain="[('type', 'in', ('bank', 'cash'))]"),
+        'prestamo_cuota_ids': fields.one2many("prestamo.cuota", 'prestamo_recibo_id',"Cuota", required=True),
         'prestamo_cuenta_id': fields.many2one("prestamo.cuenta", "Cuenta", required=True),
+
+        #'prestamo_cuota_ids': fields.many2many("prestamo.cuota", "prestamo_recibo_ids", "Cuotas"),
     }
+
+    _defaults = {
+        'fecha': lambda *a: time.strftime('%Y-%m-%d'),
+    }
+
+    @api.model
+    def default_get(self, fields):
+        rec = super(prestamo_recibo, self).default_get(fields)
+        context = dict(self._context or {})
+        active_model = context.get('active_model')
+        active_ids = context.get('active_ids')
+
+        _logger.error("rec : %r", rec)
+        _logger.error("context : %r", context)
+        _logger.error("active_model : %r", active_model)
+        _logger.error("active_ids : %r", active_ids)
+
+        # Checks on context parameters
+        if not active_model or not active_ids:
+            raise UserError(_("Programmation error: wizard action executed without active_model or active_ids in context."))
+        if active_model != 'prestamo.cuota':
+            raise UserError(_("Programmation error: the expected model for this action is 'account.invoice'. The provided one is '%d'.") % active_model)
+
+        # Checks on received cuotas records
+        cuotas = self.env[active_model].browse(active_ids)
+#        if any(invoice.state != 'open' for invoice in invoices):
+#            raise UserError(_("You can only register payments for open invoices"))
+#        if any(inv.commercial_partner_id != invoices[0].commercial_partner_id for inv in invoices):
+#            raise UserError(_("In order to pay multiple invoices at once, they must belong to the same commercial partner."))
+#        if any(MAP_INVOICE_TYPE_PARTNER_TYPE[inv.type] != MAP_INVOICE_TYPE_PARTNER_TYPE[invoices[0].type] for inv in invoices):
+#            raise UserError(_("You cannot mix customer invoices and vendor bills in a single payment."))
+#        if any(inv.currency_id != invoices[0].currency_id for inv in invoices):
+#            raise UserError(_("In order to pay multiple invoices at once, they must use the same currency."))
+
+        total_amount = sum(cuota.monto_cuota for cuota in cuotas)
+
+        rec.update({
+            'monto': abs(total_amount),
+            'prestamo_cuota_ids': active_ids,
+#            'currency_id': invoices[0].currency_id.id,
+#            'payment_type': total_amount > 0 and 'inbound' or 'outbound',
+#            'partner_id': invoices[0].commercial_partner_id.id,
+#            'partner_type': MAP_INVOICE_TYPE_PARTNER_TYPE[invoices[0].type],
+        })
+        return rec
 
 class prestamo_cuenta(osv.Model):
     _name = 'prestamo.cuenta'

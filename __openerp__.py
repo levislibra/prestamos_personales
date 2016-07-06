@@ -15,7 +15,7 @@ Gestion de prestamos personales.
 
 """,
     'website': 'www.levislibra.com.ar',
-    'depends': [],
+    'depends': ['account_accountant'],
     'test': [
         
     ],

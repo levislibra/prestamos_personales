@@ -83,7 +83,9 @@
                         <field name="tasa_de_interes"/>
                         <field name="tasa_de_punitorios"/>
                         <field name="dias_de_gracia_punitorios"/>
-                        <field name="dias_entre_vencimientos"/>
+                        <field name="dias_entre_vencimientos_select"/>
+                        <field name="dias_entre_vencimientos" attrs="{'invisible': [('dias_entre_vencimientos_select','!=','dias')]}"/>
+                        <field name="iva_incluido"/>
                         <field name="proporcional_primer_cuota"/>
                         <field name="tipo_de_amortizacion"/>
                         <field name="dia_diferimiento_cuota"/>
@@ -127,42 +129,37 @@
             <form string="Cuenta">
                 <header>
                     <button name="confirmar" string="Confirmar" states="borrador" type="object" />
-                    <button name="nuevo_prestamo" string="Nuevo Prestamo" states="confirmado" type="object" />
                     <field name="state" widget="statusbar"/>
                 </header>
                 <sheet>
-                    <group>
-                        <field name="id"/>
-                        <field name="cliente_id" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
-                        <field name="especificacion_laboral"/>
-                        <field name="recibo_de_sueldo"/>
-                        <field name="limite_credito"/>
-                        <field name="ingresos_comprobables"/>
-                        <field name="fecha_inicio_trabajo_actual"/>
-                        <field name="active"/>
-                        <label for="actualizar" string=""/>
-                        <button name="actualizar" string="Actualizar cuotas" type="object" />
+                <div name="button_box" position="inside" align="right">
+                        <button type="action"
+                            class="oe_stat_button"
+                            id="cuotas_pendientes"
+                            icon="fa-pencil-square-o"
+                            name="%(cuotas_pendientes_action)d">
+                            <div class="o_form_field o_stat_info">
+                                <span class="o_stat_value">
+                                </span>
+                                <span class="o_stat_text">Cuotas pendientes</span>
+                            </div>
+                        </button>
+                    </div>
+                    <group position="inside">
+                        <group>
+                            <field name="id"/>
+                            <field name="cliente_id" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                            <field name="especificacion_laboral"/>
+                            <field name="limite_credito"/>
+                            <field name="recibo_de_sueldo"/>
+                        </group>
+                        <group>
+                            <field name="ingresos_comprobables"/>
+                            <field name="fecha_inicio_trabajo_actual"/>
+                            <field name="active"/>
+                        </group>
                     </group>
                     <notebook>
-                        <page string="Cuotas pendientes">
-                            <field name="cuota_ids">
-                                <tree string="Cuotas">
-                                    <field name="numero_cuota"/>
-                                    <field name="prestamo_prestamo_id"/>
-                                    <field name="fecha_vencimiento"/>
-                                    <field name="capital_saldo"/>
-
-                                    <field name="capital_cuota" sum="Total"/>
-                                    <field name="interes_cuota" sum="Total"/>
-                                    <field name="iva_cuota" sum="Total"/>
-                                    <field name="punitorios_cuota" sum="Total"/>
-                                    <field name="cobrado_cuota" sum="Total"/>
-                                    <field name="monto_cuota" sum="Total"/>
-                                    <field name="ultima_fecha_cobro_cuota"/>
-                                    <field name="state"/>
-                                </tree>
-                            </field>
-                        </page>
                         <page string="Prestamos">
                             <field name="prestamo_prestamo_ids" readonly="1">
                                 <tree string="Prestamos">
@@ -174,25 +171,43 @@
                             </field>
                         </page>
                         <page string="Recibos">
-                            <field name="prestamo_recibo_ids">
-                                <tree string="Recibos">
+                            <field name="prestamo_recibo_ids" readonly="1">
+                                <tree string="Recibos" delete="false">
                                         <field name="fecha"/>
                                         <field name="monto"/>
+                                        <field name="journal_id"/>
+                                        <field name="detalle"/>
+                                        <field name="move_id"/>
                                 </tree>
-                                <form string="Recibo" editable="bottom">
+                                <form string="Recibo">
                                     <header>
                                     </header>
                                     <sheet>
                                         <group>
                                             <field name="fecha"/>
                                             <field name="monto"/>
+                                            <field name="journal_id"/>
+                                            <field name="move_id"/>
+                                            <field name="detalle"/>
                                         </group>
+                                        <notebook>
+                                            <page string="Cuotas">
+                                                <field name="prestamo_cuota_ids"/>
+                                            </page>
+                                        </notebook>
                                     </sheet>
                                 </form>
                             </field>
                         </page>
                         <page string="Observaciones">
-                            <field name="prestamo_observacion_ids"/>
+                            <field name="prestamo_observacion_ids">
+                                <tree name="Observaciones" editable="top">
+                                    <field name="fecha"/>
+                                    <field name="detalle"/>
+                                    <field name="fecha_proxima_accion"/>
+                                    <field name="accion"/>
+                                </tree>
+                            </field>
                         </page>
                     </notebook>
                 </sheet>
@@ -207,7 +222,7 @@
         <field name="view_id" ref="prestamo_cuenta_tree"/>
     </record>
 
-    <record id="add_more_action" model="ir.actions.act_window">
+    <!--record id="add_more_action" model="ir.actions.act_window">
         <field name="name">Cuotas pendientes</field>
         <field name="type">ir.actions.act_window</field>
         <field name="res_model">prestamo.cuenta</field>
@@ -216,16 +231,16 @@
         <field name="view_id" ref="prestamo_cuenta_action"/>
         <field name="target">new</field>
         <field name="multi">True</field>
-    </record>
+    </record -->
 
     <act_window name="Cuotas pendientes"
     res_model="prestamo.cuota"
     src_model="prestamo.cuenta"
-    key2="client_action_multi" 
-    view_mode="tree" target="current" 
+    key2="client_action_multi"
+    view_mode="tree" target="current"
     view_id="prestamo_cuota_tree"
     id="cuotas_pendientes_action" 
-    domain="[('prestamo_prestamo_id.prestamo_cuenta_id', '=', active_id), ('state', '!=', 'borrador')]"/>
+    domain="[('prestamo_prestamo_id.prestamo_cuenta_id', '=', active_id), ('prestamo_prestamo_id.state', '=', 'pagado'), ('state', 'in', ('activa', 'moraTemprana', 'moraMedia', 'moraTardia', 'incobrable'))]"/>
 
     <act_window
     id="cobrar_cuotas_action"
@@ -233,7 +248,17 @@
     res_model="prestamo.recibo"
     src_model="prestamo.cuota"
     view_mode="form"
-    multi="True"
+    multi="False"
+    target="new"
+    key2="client_action_multi"/>
+
+    <act_window
+    id="pagar_prestamo_action"
+    name="Pagar prestamo"
+    res_model="prestamo.pago"
+    src_model="prestamo.prestamo"
+    view_mode="form"
+    multi="False"
     target="new"
     key2="client_action_multi"/>
 
@@ -260,18 +285,23 @@
                 <header>
                     <button name="confirmar" states="borrador" string="Confirmar" type="object" />
                     <button name="calcular_cuotas_plan" states="borrador" string="Generar cuotas" type="object" />
-                    <button name="pagar" states="confirmado" string="Pagar" type="object" />
+                    <button type="action"
+                            id="pagar_prestamo_pendientes"
+                            string="Pagar"
+                            states="confirmado"
+                            name="%(pagar_prestamo_action)d"/>
                     <button name="cancelar" states="confirmado" string="Cancelar" type="object" />
                     <field name="state" widget="statusbar"/>
                 </header>
                 <sheet>
                     <group>
                         <field name="id"/>
-                        <field name="fecha"/>
-                        <field name="prestamo_cuenta_id"/>
-                        <field name="monto_otorgado"/>
-                        <field name="fecha_primer_vencimiento"/>
-                        <field name="prestamo_plan_id" />
+                        <field name="fecha" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                        <field name="prestamo_cuenta_id" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                        <field name="monto_otorgado" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                        <field name="fecha_primer_vencimiento" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                        <field name="prestamo_plan_id" attrs="{'readonly': [('state', '!=', 'borrador')]}"/>
+                        <field name="prestamo_pago_id"/>
                     </group>
                     <notebook>
                         <page string="Cuotas">
@@ -320,7 +350,6 @@
         <field name="model">prestamo.cuota</field>
         <field name="arch" type="xml">
             <tree string="Cuota">
-                <field name="cuenta_id"/>
                 <field name="numero_cuota"/>
                 <field name="prestamo_prestamo_id"/>
                 <field name="fecha_vencimiento"/>
@@ -330,8 +359,9 @@
                 <field name="interes_cuota" sum="Total"/>
                 <field name="iva_cuota" sum="Total"/>
                 <field name="punitorios_cuota" sum="Total"/>
-                <field name="cobrado_cuota" sum="Total"/>
                 <field name="monto_cuota" sum="Total"/>
+                <field name="cobrado_cuota" sum="Total"/>
+                <field name="saldo_cuota" sum="Total"/>
                 <field name="ultima_fecha_cobro_cuota"/>
                 <field name="state"/>
             </tree>
@@ -373,6 +403,51 @@
         <field name="view_id" ref="prestamo_cuota_tree"/>
     </record>
 
+
+    <!-- pago - Formulario de creacion -->
+
+    <record id="prestamo_pago_tree" model="ir.ui.view">
+        <field name="name">prestamo.pago.tree</field>
+        <field name="model">prestamo.pago</field>
+        <field name="arch" type="xml">
+            <tree string="Pagos">
+                <field name="fecha"/>
+                <field name="monto"/>
+                <field name="journal_id"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="prestamo_pago_form" model="ir.ui.view">
+        <field name="name">prestamo.pago.form</field>
+        <field name="model">prestamo.pago</field>
+        <field name="arch" type="xml">
+            <form string="Pago" editable="bottom">
+                <header>
+                    <field name="state" widget="statusbar" />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="journal_id" widget="selection"/>
+                            <field name="monto"/>
+                        </group>
+                        <group>
+                            <field name="fecha"/>
+                            <field name="move_id"/>
+                            <field name="prestamo_prestamo_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <footer>
+                        <button string='Validate' states="borrador" name="crear_pago" type="object" class="btn-primary"/>
+                        <button string="Cancel" states="borrador" class="btn-default" special="cancel"/>
+                    </footer>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+
     <!-- Recibo - Formulario de creacion -->
 
     <record id="prestamo_recibo_tree" model="ir.ui.view">
@@ -382,6 +457,8 @@
             <tree string="Recibos">
                 <field name="fecha"/>
                 <field name="monto"/>
+                <field name="journal_id"/>
+                <field name="prestamo_cuota_ids"/>
             </tree>
         </field>
     </record>
@@ -401,13 +478,14 @@
                         </group>
                         <group>
                             <field name="fecha"/>
+                            <field name="move_id"/>
+                            <field name="prestamo_cuenta_id"/>
                         </group>
                     </group>
-                    <notebook>
-                        <page string="Cuotas a cobrar">
-                            <field name="prestamo_cuota_ids" readonly="1"/>
-                        </page>
-                    </notebook>
+                    <footer>
+                        <button string='Validate' name="crear_recibo" type="object" class="btn-primary"/>
+                        <button string="Cancel" class="btn-default" special="cancel"/>
+                    </footer>
                 </sheet>
             </form>
         </field>

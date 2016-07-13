@@ -89,6 +89,8 @@
                         <field name="proporcional_primer_cuota"/>
                         <field name="tipo_de_amortizacion"/>
                         <field name="dia_diferimiento_cuota"/>
+                        <field name="journal_id"/>
+                        <field name="cuenta_iva_id"/>
                     </group>
                 </sheet>
             </form>

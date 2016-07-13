@@ -67,6 +67,8 @@ class prestamo_plan(osv.Model):
         'proporcional_primer_cuota': fields.boolean("Interes proporcional en primer cuota", required=True),
         'tipo_de_amortizacion': fields.selection([('sistema_directa', 'Sistema de tasa directa'), ('sistema_frances', 'Sistema frances'), ('sistema_aleman', 'Sistema aleman'), ('sistema_americano', 'Sistema americano')], string='Sistema de tasa', required=True, select=True,),
         'dia_diferimiento_cuota': fields.integer("Dia para el diferimiento mensual de la primer cuota"),
+        'journal_id': fields.many2one('account.journal', 'Diario ventas/ingresos', domain="[('type', '=', 'sale')]", required=True),
+        'cuenta_iva_id': fields.many2one('account.account', 'Cuenta IVA credito', required=True),
     }
 #    _defaults = {
 #        'codigo': "000",#lambda *a: time.strftime('%Y-%m-%d'),
@@ -103,6 +105,41 @@ class prestamo_cuota(osv.Model):
     _defaults = {
         'state': "borrador",
     }
+
+    def get_conceptos_de_cobro(self, monto):
+        ret = {'capital': 0, 'interes': 0, 'iva': 0, 'punitorios': 0}
+        cobrado = {'capital': 0, 'interes': 0, 'iva': 0, 'punitorios': 0}
+
+        if self.cobrado_cuota > 0:
+            monto_previo = self.cobrado_cuota
+            if monto_previo > 0:
+                cobrado['capital'] = min(self.capital_cuota, monto_previo)
+                monto_previo = monto_previo - cobrado['capital']
+            if monto_previo > 0:
+                cobrado['interes'] = min(self.interes_cuota, monto_previo)
+                monto_previo = monto_previo - cobrado['interes']
+            if monto_previo > 0:
+                cobrado['iva'] = min(self.iva_cuota, monto_previo)
+                monto_previo = monto_previo - cobrado['iva']
+            if monto_previo > 0:
+                cobrado['punitorios'] = min(self.punitorios_cuota, monto_previo)
+                monto_previo = monto_previo - cobrado['punitorios']
+
+
+        if monto > 0:
+            ret['capital'] = min(self.capital_cuota-cobrado['capital'], monto)
+            monto = monto - ret['capital']
+        if monto > 0:
+            ret['interes'] = min(self.interes_cuota-cobrado['interes'], monto)
+            monto = monto - ret['interes']
+        if monto > 0:
+            ret['iva'] = min(self.iva_cuota-cobrado['iva'], monto)
+            monto = monto - ret['iva']
+        if monto > 0:
+            ret['punitorios'] = min(self.punitorios_cuota-cobrado['punitorios'], monto)
+            monto = monto - ret['punitorios']
+
+        return ret    
 
     @api.one
     @api.depends('numero_cuota')
@@ -405,11 +442,7 @@ class prestamo_recibo(osv.Model):
         total_amount = sum(cuota.saldo_cuota for cuota in cuotas)
         rec.update({
             'monto': abs(total_amount),
-            #'prestamo_cuota_ids': active_ids,
-#            'currency_id': invoices[0].currency_id.id,
-#            'payment_type': total_amount > 0 and 'inbound' or 'outbound',
             'prestamo_cuenta_id': cuotas[0].prestamo_prestamo_id.prestamo_cuenta_id.id,
-#            'partner_type': MAP_INVOICE_TYPE_PARTNER_TYPE[invoices[0].type],
         })
         return rec
 
@@ -427,7 +460,7 @@ class prestamo_recibo(osv.Model):
         }
 
 
-    def crear_move_cobro(self):
+    def crear_move_cobro(self, prestamo, capital, interes, iva, punitorios):
         move = None
         company_id = self.env['res.users'].browse(self.env.uid).company_id.id
 
@@ -435,7 +468,7 @@ class prestamo_recibo(osv.Model):
             #list of move line
             line_ids = []
             # create move line
-            # Registro el monto cobrado
+            # Registro el monto cobrado en caja
             aml = {
                 'date': self.fecha,
                 'account_id': self.journal_id.default_debit_account_id.id,
@@ -446,15 +479,38 @@ class prestamo_recibo(osv.Model):
             line_ids.append((0,0,aml))
 
             # create move line
-            # Acredito el monto a la cuenta del cliente
+            # Acredito el devolucion capital a la cuenta del cliente
             aml2 = {
                 'date': self.fecha,
                 'account_id': self.prestamo_cuenta_id.cliente_id.property_account_receivable_id.id,
-                'name': 'Prestamo - Cuotas cobradas',
+                'name': 'Prestamo - Devolucion capital',
                 'partner_id': self.prestamo_cuenta_id.cliente_id.id,
-                'credit': self.monto,
+                'credit': capital,
             }
             line_ids.append((0,0,aml2))
+
+            # create move line
+            # Acredito el IVA a pagar - cuenta a pagar
+            aml3 = {
+                'date': self.fecha,
+                'account_id': prestamo.prestamo_plan_id.cuenta_iva_id.id,
+                'name': 'Prestamo - IVA cobrado',
+                'partner_id': self.prestamo_cuenta_id.cliente_id.id,
+                'credit': iva,
+            }
+            line_ids.append((0,0,aml3))
+
+            # create move line
+            # Acredito el la ganancias de intereses
+            intereses_cobrados = interes + punitorios
+            aml4 = {
+                'date': self.fecha,
+                'account_id': prestamo.prestamo_plan_id.journal_id.default_debit_account_id.id,
+                'name': 'Prestamo - Intereses cobrados',
+                'partner_id': self.prestamo_cuenta_id.cliente_id.id,
+                'credit': intereses_cobrados,
+            }
+            line_ids.append((0,0,aml4))
 
             move_name = "Prestamo/Cobro"
             move = self.env['account.move'].create({
@@ -478,15 +534,28 @@ class prestamo_recibo(osv.Model):
         #self.prestamo_cuota_ids = [(4, cuota.id, None) for cuota in self._get_cuotas()]
         cuotas_cobradas = []
         monto = self.monto
+        capital = 0
+        interes = 0
+        punitorios = 0
+        iva = 0
+        val = None
         detalle = ""
         for cuota in self._get_cuotas():
+            prestamo = cuota.prestamo_prestamo_id
             if monto > 0:
+                val = cuota.get_conceptos_de_cobro(monto)
+                capital = capital + val['capital']
+                interes = interes + val['interes']
+                iva = iva + val['iva']
+                punitorios = punitorios + val['punitorios']
+
                 cuotas_cobradas.append((4, cuota.id, None))
                 cuota.ultima_fecha_cobro_cuota = self.fecha
                 resto = float("{0:.2f}".format(monto - cuota.saldo_cuota))
                 _logger.error("resto : %r", resto)
                 if resto >= 0:
                     if cuota.cobrado_cuota > 0:
+
                         detalle = detalle + "Cobro (final) de $" + str(cuota.saldo_cuota) + " en concepto de saldo de cuota Nro " + str(cuota.numero_cuota) + ", " + cuota.prestamo_prestamo_id.display_name + ". "
                     else:
                         detalle = detalle + "Cobro (total) de $" + str(cuota.saldo_cuota) + " en concepto de cuota Nro " + str(cuota.numero_cuota) + ", " + cuota.prestamo_prestamo_id.display_name + ". "
@@ -500,7 +569,7 @@ class prestamo_recibo(osv.Model):
                 monto = resto
         self.prestamo_cuota_ids = cuotas_cobradas
         self.detalle = detalle
-        self.crear_move_cobro()
+        self.crear_move_cobro(prestamo, capital, interes, iva, punitorios)
         return {'type': 'ir.actions.act_window_close'}
 
 class prestamo_cuenta(osv.Model):

@@ -60,7 +60,6 @@
                 <field name="dias_entre_vencimientos"/>
                 <field name="proporcional_primer_cuota"/>
                 <field name="tipo_de_amortizacion"/>
-                <field name="dia_diferimiento_cuota"/>
             </tree>
         </field>
     </record>
@@ -89,7 +88,10 @@
                         <field name="proporcional_primer_cuota"/>
                         <field name="tipo_de_amortizacion"/>
                         <field name="dia_diferimiento_cuota"/>
+                        <field name="comision_de_apertura"/>
+                        <field name="gastos_de_gestion"/>
                         <field name="journal_id"/>
+                        <field name="journal_otros_ingresos_id"/>
                         <field name="cuenta_iva_id"/>
                     </group>
                 </sheet>
@@ -243,6 +245,22 @@
     view_id="prestamo_cuota_tree"
     id="cuotas_pendientes_action" 
     domain="[('prestamo_prestamo_id.prestamo_cuenta_id', '=', active_id), ('prestamo_prestamo_id.state', '=', 'pagado'), ('state', 'in', ('activa', 'moraTemprana', 'moraMedia', 'moraTardia', 'incobrable'))]"/>
+
+    <act_window name="Cuotas"
+    res_model="prestamo.cuota"
+    key2="client_action_multi"
+    view_mode="tree" target="current"
+    view_id="prestamo_cuota_tree"
+    id="cuotas_informe_action"
+    domain="[('state', 'in', ('activa', 'moraTemprana', 'moraMedia', 'moraTardia', 'incobrable'))]"/>
+
+    <act_window name="Prestamos"
+    res_model="prestamo.prestamo"
+    key2="client_action_multi"
+    view_mode="tree" target="current"
+    view_id="prestamo_prestamo_tree"
+    id="prestamo_informe_action"
+    />
 
     <act_window
     id="cobrar_cuotas_action"
@@ -433,6 +451,10 @@
                         <group>
                             <field name="journal_id" widget="selection"/>
                             <field name="monto"/>
+                            <field name="comision_de_apertura"/>
+                            <field name="monto_de_apertura"/>
+                            <field name="gastos_de_gestion"/>
+                            <field name="monto_recibido"/>
                         </group>
                         <group>
                             <field name="fecha"/>
@@ -509,10 +531,10 @@
     <menuitem id="submenu_informes" name="Informes" parent="menu_prestamos" sequence="1" />
 
 
-    <menuitem id="submenu_prestamos_action" name="Prestamos" parent="submenu_informes" action="prestamo_prestamo_action"  sequence="0" />
+    <menuitem id="submenu_prestamos_action" name="Prestamos" parent="submenu_informes" action="prestamo_informe_action"  sequence="0" />
 
 
-    <menuitem id="submenu_cuotas_action" name="Cuotas" parent="submenu_informes" action="prestamo_cuota_action"  sequence="1" />
+    <menuitem id="submenu_cuotas_action" name="Cuotas" parent="submenu_informes" action="cuotas_informe_action"  sequence="1" />
 
     <!-- SubMenu Configuracion  -->
     <menuitem id="submenu_prestamos_configuracion" name="Configuracion" parent="menu_prestamos"  sequence="2" />

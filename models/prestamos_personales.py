@@ -58,17 +58,19 @@ class prestamo_plan(osv.Model):
         'active': fields.boolean("Activo"),
         'recibo_de_sueldo': fields.boolean("Requiere recibo de sueldo?", required=True),
         'cuotas': fields.integer("Cuotas", required=True),
-        'tasa_de_interes': fields.float("Tasa de interes mensual", required=True),
-        'tasa_de_punitorios': fields.float("Tasa de punitorios mensual", required=True),
+        'tasa_de_interes': fields.float("Tasa de interes mensual", required=True, digits=(16,3)),
+        'tasa_de_punitorios': fields.float("Tasa de punitorios mensual", required=True, digits=(16,3)),
         'dias_de_gracia_punitorios': fields.integer("Dias de gracia para punitorios", required=True),
-        'dias_entre_vencimientos_select': fields.selection([('mensual', 'Mensual'), ('quincenal', 'Quincenal'), ('semanal', 'Semanal'), ('dias', 'Cantidad de dias')], string='Dias entre vencimientos', required=True, select=True),
+        'dias_entre_vencimientos_select': fields.selection([('mensual', 'Mensual'), ('dias', 'Cantidad de dias')], string='Dias entre vencimientos', required=True, select=True),
         'dias_entre_vencimientos': fields.integer("Dias entre vencimientos", required=True),
         'iva_incluido': fields.boolean("IVA incluido en tasa de interes?"),
         'proporcional_primer_cuota': fields.boolean("Interes proporcional en primer cuota", required=True),
         'tipo_de_amortizacion': fields.selection([('sistema_directa', 'Sistema de tasa directa'), ('sistema_frances', 'Sistema frances'), ('sistema_aleman', 'Sistema aleman'), ('sistema_americano', 'Sistema americano')], string='Sistema de tasa', required=True, select=True,),
-        'dia_diferimiento_cuota': fields.integer("Dia para el diferimiento mensual de la primer cuota"),
         'journal_id': fields.many2one('account.journal', 'Diario ventas/ingresos', domain="[('type', '=', 'sale')]", required=True),
+        'journal_otros_ingresos_id': fields.many2one('account.journal', 'Diario otros ingresos', domain="[('type', '=', 'sale')]", required=True),
         'cuenta_iva_id': fields.many2one('account.account', 'Cuenta IVA credito', required=True),
+        'comision_de_apertura': fields.float("Comision de apertura (%)", help="Aplicado sobre monto otorgado.", digits=(16,3)),
+        'gastos_de_gestion': fields.float("Gaston de gestion", help="Es el monto de gastos de gestion, el cual disminuye el monto otorgado al cliente."),
     }
 #    _defaults = {
 #        'codigo': "000",#lambda *a: time.strftime('%Y-%m-%d'),
@@ -114,16 +116,16 @@ class prestamo_cuota(osv.Model):
             monto_previo = self.cobrado_cuota
             if monto_previo > 0:
                 cobrado['capital'] = min(self.capital_cuota, monto_previo)
-                monto_previo = monto_previo - cobrado['capital']
+                monto_previo = float("{0:.2f}".format(monto_previo - cobrado['capital']))
             if monto_previo > 0:
                 cobrado['interes'] = min(self.interes_cuota, monto_previo)
-                monto_previo = monto_previo - cobrado['interes']
+                monto_previo = float("{0:.2f}".format(monto_previo - cobrado['interes']))
             if monto_previo > 0:
                 cobrado['iva'] = min(self.iva_cuota, monto_previo)
-                monto_previo = monto_previo - cobrado['iva']
+                monto_previo = float("{0:.2f}".format(monto_previo - cobrado['iva']))
             if monto_previo > 0:
                 cobrado['punitorios'] = min(self.punitorios_cuota, monto_previo)
-                monto_previo = monto_previo - cobrado['punitorios']
+                monto_previo = float("{0:.2f}".format(monto_previo - cobrado['punitorios']))
 
 
         if monto > 0:
@@ -152,7 +154,8 @@ class prestamo_cuota(osv.Model):
         cuotas_obj = self.pool.get('prestamo.cuota')
         cr = self.env.cr
         uid = self.env.uid
-        cuotas_obj_ids = cuotas_obj.search(cr, uid, [('state', '=', 'activa'), ('fecha_vencimiento', '<', time.strftime('%Y-%m-%d'))])
+        cuotas_obj_ids = cuotas_obj.search(cr, uid, [('state', '=', 'activa')])
+        #cuotas_obj_ids = cuotas_obj.search(cr, uid, [('state', '=', 'activa'), ('fecha_vencimiento', '<', time.strftime('%Y-%m-%d'))])
         _logger.error("cuotas: %r", cuotas_obj_ids)
         for cuota_id in cuotas_obj_ids:
             cuota = cuotas_obj.browse(cr, uid, cuota_id, context=None)
@@ -162,8 +165,8 @@ class prestamo_cuota(osv.Model):
     @api.one
     @api.depends('capital_cuota', 'interes_cuota', 'iva_cuota', 'punitorios_cuota', 'cobrado_cuota')
     def _compute_monto_cuota(self):
-        self.monto_cuota = abs(self.capital_cuota + self.interes_cuota + self.iva_cuota + self.punitorios_cuota)
-        self.saldo_cuota = abs(self.capital_cuota + self.interes_cuota + self.iva_cuota + self.punitorios_cuota - self.cobrado_cuota)
+        self.monto_cuota = float("{0:.2f}".format(abs(self.capital_cuota + self.interes_cuota + self.iva_cuota + self.punitorios_cuota)))
+        self.saldo_cuota = float("{0:.2f}".format(abs(self.capital_cuota + self.interes_cuota + self.iva_cuota + self.punitorios_cuota - self.cobrado_cuota)))
 
 class prestamo_prestamo(osv.Model):
     _name = 'prestamo.prestamo'
@@ -201,6 +204,11 @@ class prestamo_prestamo(osv.Model):
             self.state = "confirmado"
 
     @api.multi
+    def confirmar(self):
+        if self.prestamo_cuota_ids and len(self.prestamo_cuota_ids) >= 1:
+            self.state = "confirmado"
+
+    @api.multi
     def pagar(self):
         self.state = "pagado"
         for cuota in self.prestamo_cuota_ids:
@@ -212,6 +220,110 @@ class prestamo_prestamo(osv.Model):
         for cuota in self.prestamo_cuota_ids:
             cuota.unlink()
 
+    def caclular_fechas_de_vencimientos(self):
+        ret = []
+        fecha_primer_vencimiento = self.fecha_primer_vencimiento
+        fecha_primer_vencimiento_obj = datetime.strptime(str(fecha_primer_vencimiento), "%Y-%m-%d")
+        cantidad_de_cuotas = self.prestamo_plan_id.cuotas
+        if self.prestamo_plan_id.dias_entre_vencimientos_select == 'mensual':
+            if fecha_primer_vencimiento_obj.day > 28:
+                raise ValidationError("Fecha mayor al dia 28 no es correcta.")
+            else:
+                ret.append(fecha_primer_vencimiento_obj)
+                day = fecha_primer_vencimiento_obj.day
+                month = fecha_primer_vencimiento_obj.month
+                year = fecha_primer_vencimiento_obj.year
+                i = 1
+                while i < cantidad_de_cuotas:
+                    month = month + 1
+                    if month > 12:
+                        month = 1
+                        year = year + 1
+                    fecha_str = str(year)+"-"+str(month)+"-"+str(day)
+                    fecha_vencimiento = datetime.strptime(str(fecha_str), "%Y-%m-%d")
+                    ret.append(fecha_vencimiento)
+                    i = i + 1
+        else:
+            dias_entre_vencimientos = self.prestamo_plan_id.dias_entre_vencimientos
+            i = 0
+            while i < cantidad_de_cuotas:
+                #i = 0, primer cuota ==> dias_totales = 0
+                dias_totales = dias_entre_vencimientos * i
+                fecha_vencimiento = fecha_primer_vencimiento_obj + timedelta(days=dias_totales)
+                ret.append(fecha_vencimiento)
+                i = i + 1
+
+        return ret
+
+    def caclular_elementos_cuotas(self):
+        ret = []
+
+        capital_total = self.monto_otorgado
+        capital_saldo = self.monto_otorgado
+        tasa_de_interes_mensual = self.prestamo_plan_id.tasa_de_interes
+        periodos = self.prestamo_plan_id.cuotas
+
+        tasa_de_interes_periodo = 0
+        if self.prestamo_plan_id.dias_entre_vencimientos_select == 'mensual':
+            tasa_de_interes_periodo = tasa_de_interes_mensual
+        elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'quincenal':
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * 15
+        elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'semanal':
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * 7
+        elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'dias':
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * self.prestamo_plan_id.dias_entre_vencimientos
+
+        #Obtenemos el tax de la compania
+        cr = self.env.cr
+        uid = self.env.uid
+        company_id = self.env['res.users'].browse(self.env.uid).company_id.id
+        ir_values = self.pool.get('ir.values')
+        taxes_id = ir_values.get_default(cr, uid, 'product.product', 'taxes_id', company_id=company_id)
+        _logger.error("ir_values: %r", ir_values)
+
+        if self.prestamo_plan_id.tipo_de_amortizacion == 'sistema_directa':
+            #Calculamos el capital de la cuota - igual para todas las cuotas
+            capital_cuota = float("{0:.2f}".format(capital_total / periodos))
+            diferencia_centavos = float("{0:.2f}".format((capital_cuota * periodos) - capital_total))
+            
+            
+            #Calculamos el interes - igual para todas las cuotas
+
+            #Calculamos el posible interes adicional de la primer cuota
+#            fecha_inicial = datetime.strptime(str(self.fecha), "%Y-%m-%d")
+#            fecha_final = datetime.strptime(str(self.fecha_primer_vencimiento), "%Y-%m-%d")
+#            diferencia = fecha_final - fecha_inicial
+#            interes_cuota = 
+
+
+
+            if self.prestamo_plan_id.iva_incluido:
+
+                interes_cuota = float("{0:.2f}".format((((tasa_de_interes_periodo * periodos) * capital_total) / periodos) / 1.21))
+            else:
+                interes_cuota = float("{0:.2f}".format(((tasa_de_interes_periodo * periodos) * capital_total) / periodos))
+            _logger.error("interes_cuota: %r", interes_cuota)
+            _logger.error("interes_cuota * periodos: %r", interes_cuota * periodos)
+            _logger.error("interes_cuota: %r", interes_cuota)
+            i = 0
+            while i < periodos:
+                #Calculamos la diferencia en centavos del capital_cuota de la primer cuota
+                if i == 0:
+                    capital_cuota = capital_cuota - diferencia_centavos
+                else:
+                    capital_cuota = float("{0:.2f}".format(capital_total / periodos))
+
+                #Calculamos el capital_saldo - disminuye conforme avanzan las cuotas
+                capital_saldo = capital_total - capital_cuota * i
+
+                #Calculamos el iva cuota - sobre el interes - igual para todas las cuotas
+                iva_cuota = float("{0:.2f}".format(interes_cuota * 0.21))
+                ret.append((capital_saldo, capital_cuota, interes_cuota, iva_cuota))
+                i = i + 1
+
+        return ret
+
+
     @api.multi
     def calcular_cuotas_plan(self):
 
@@ -221,36 +333,19 @@ class prestamo_prestamo(osv.Model):
 
 
         if self.prestamo_plan_id.cuotas != False:
-            cantidad_de_cuotas = self.prestamo_plan_id.cuotas
-            capital_saldo = self.monto_otorgado
-            capital_cuota = self.monto_otorgado / cantidad_de_cuotas
-
             cuota_ids = []
-            i = 0
-            dias = 0
-            dif_dias = 0
-            diferencias_en_dias = [-1, 1, -1, 0, -1, 0, -1, -1, 0, -1, 0, -1]
-            fecha_primer_vencimiento_obj = datetime.strptime(str(self.fecha_primer_vencimiento), "%Y-%m-%d")
-            
-            tasa_de_interes_mensual = self.prestamo_plan_id.tasa_de_interes
-            periodos = self.prestamo_plan_id.cuotas
-            interes = ((tasa_de_interes_mensual * periodos) * self.monto_otorgado) / periodos
-            while i < cantidad_de_cuotas:
-                
-                
-                dias = self.prestamo_plan_id.dias_entre_vencimientos * i
-                if i > 0:
-                    fecha_vencimiento_previo = fecha_primer_vencimiento_obj + timedelta(days=(dias - self.prestamo_plan_id.dias_entre_vencimientos - dif_dias))
-                else:
-                    fecha_vencimiento_previo = fecha_primer_vencimiento_obj
-                if (i > 0 and fecha_vencimiento_previo.day + self.prestamo_plan_id.dias_entre_vencimientos) >  (30 + diferencias_en_dias[fecha_vencimiento_previo.month-1]):
-                    dif_dias = dif_dias + diferencias_en_dias[fecha_vencimiento_previo.month-1]
-               
-                fecha_vencimiento = fecha_primer_vencimiento_obj + timedelta(days=(dias-dif_dias))
-                interes_cuota = interes
-                iva_cuota =  interes_cuota * 0.21
+            i = 0            
+            fecha_valores = self.caclular_fechas_de_vencimientos()
+            _logger.error("Fechas de vencimientos: %r", fecha_valores)
+            elementos_cuotas = self.caclular_elementos_cuotas()
+            while i < self.prestamo_plan_id.cuotas:
+                fecha_vencimiento = fecha_valores[i]
+                ec = elementos_cuotas[i]
+                capital_saldo = ec[0]
+                capital_cuota = ec[1]
+                interes_cuota = ec[2]
+                iva_cuota = ec[3]
                 monto_cuota = capital_cuota + interes_cuota + iva_cuota
-                saldo_cuota = capital_cuota + interes_cuota + iva_cuota
                 numero_cuota = i + 1
 
                 val = {
@@ -301,9 +396,13 @@ class prestamo_pago(osv.Model):
         'id': fields.integer("ID", readonly=True),
         'name': fields.char("ID", readonly=True, compute="compute_name"),
         'fecha': fields.date("Fecha", required=True),
-        'monto': fields.float("Monto", required=True),
+        'monto': fields.float("Capital otorgado", readonly=True),
         'journal_id': fields.many2one('account.journal', string="Metodo de Pago", required=True, domain="[('type', 'in', ('bank', 'cash'))]"),
         'prestamo_prestamo_id': fields.many2one("prestamo.prestamo", "Prestamo"),
+        'comision_de_apertura': fields.float("Comision de apertura (%)", help="Aplicado sobre monto otorgado.", digits=(16,3)),
+        'monto_de_apertura': fields.float("", readonly=True, compute="compute_monto_de_apertura"),
+        'gastos_de_gestion': fields.float("Gaston de gestion", help="Es el monto de gastos de gestion, el cual disminuye el monto otorgado al cliente."),
+        'monto_recibido': fields.float("Neto", readonly=True, compute="compute_monto_recibido"),
         'move_id': fields.many2one("account.move", "Asiento", readonly=True),
         'state': fields.selection([('borrador', 'Borrador'), ('confirmado', 'Confirmado')], string='Estado', readonly=True),
     }
@@ -312,6 +411,16 @@ class prestamo_pago(osv.Model):
     @api.depends('journal_id')
     def compute_name(self):
         self.name = "Comprobante/" + self.journal_id.name + "/" + str(self.id)
+
+    @api.one
+    @api.depends('comision_de_apertura')
+    def compute_monto_de_apertura(self):
+        self.monto_de_apertura = self.monto * self.comision_de_apertura
+
+    @api.one
+    @api.depends('comision_de_apertura', 'gastos_de_gestion')
+    def compute_monto_recibido(self):
+        self.monto_recibido = self.monto - self.monto_de_apertura - self.gastos_de_gestion
 
     _defaults = {
         'fecha': lambda *a: time.strftime('%Y-%m-%d'),
@@ -335,9 +444,15 @@ class prestamo_pago(osv.Model):
         # Checks on received cuotas records
         prestamo = self.env[active_model].browse(active_id)
         total_amount = prestamo[0].monto_otorgado
+        comision_de_apertura = prestamo[0].prestamo_plan_id.comision_de_apertura
+        monto_de_apertura = prestamo[0].prestamo_plan_id.comision_de_apertura * total_amount
+        gastos_de_gestion = prestamo[0].prestamo_plan_id.gastos_de_gestion
         rec.update({
             'monto': abs(total_amount),
             'prestamo_prestamo_id': active_id,
+            'comision_de_apertura': comision_de_apertura,
+            'monto_de_apertura': monto_de_apertura,
+            'gastos_de_gestion': gastos_de_gestion,
         })
         return rec
 
@@ -373,6 +488,30 @@ class prestamo_pago(osv.Model):
                 'debit': self.monto,
             }
             line_ids.append((0,0,aml2))
+
+            costos_de_otorgamiento = self.monto_de_apertura + self.gastos_de_gestion
+
+            # create move line
+            # Debito la comision de apertura mas gastos a la cuenta desde donde se efectua el pago
+            aml3 = {
+                'date': self.fecha,
+                'account_id': self.journal_id.default_debit_account_id.id,
+                'name': 'Prestamo - Cobro gastos y comisiones de otorgamiento',
+                'partner_id': self.prestamo_prestamo_id.prestamo_cuenta_id.cliente_id.id,
+                'debit': costos_de_otorgamiento,
+            }
+            line_ids.append((0,0,aml3))
+
+            # create move line
+            # Acredito la comision de apertura mas gastos en cuenta ganancia
+            aml4 = {
+                'date': self.fecha,
+                'account_id': self.prestamo_prestamo_id.prestamo_plan_id.journal_otros_ingresos_id.default_debit_account_id.id,
+                'name': 'Prestamo - Cobro gastos y comisiones de otorgamiento',
+                'partner_id': self.prestamo_prestamo_id.prestamo_cuenta_id.cliente_id.id,
+                'credit': costos_de_otorgamiento,
+            }
+            line_ids.append((0,0,aml4))
 
             move_name = "Prestamo/Pago"
             move = self.env['account.move'].create({
@@ -441,7 +580,7 @@ class prestamo_recibo(osv.Model):
 
         total_amount = sum(cuota.saldo_cuota for cuota in cuotas)
         rec.update({
-            'monto': abs(total_amount),
+            'monto': float("{0:.2f}".format(abs(total_amount))),
             'prestamo_cuenta_id': cuotas[0].prestamo_prestamo_id.prestamo_cuenta_id.id,
         })
         return rec
@@ -463,7 +602,10 @@ class prestamo_recibo(osv.Model):
     def crear_move_cobro(self, prestamo, capital, interes, iva, punitorios):
         move = None
         company_id = self.env['res.users'].browse(self.env.uid).company_id.id
-
+        _logger.error("capital : %r", capital)
+        _logger.error("interes : %r", interes)
+        _logger.error("iva : %r", iva)
+        _logger.error("punitorios : %r", punitorios)
         if True:
             #list of move line
             line_ids = []
@@ -544,15 +686,17 @@ class prestamo_recibo(osv.Model):
             prestamo = cuota.prestamo_prestamo_id
             if monto > 0:
                 val = cuota.get_conceptos_de_cobro(monto)
-                capital = capital + val['capital']
-                interes = interes + val['interes']
-                iva = iva + val['iva']
-                punitorios = punitorios + val['punitorios']
+                capital = float("{0:.2f}".format(capital + val['capital']))
+                interes = float("{0:.2f}".format(interes + val['interes']))
+                iva = float("{0:.2f}".format(iva + val['iva']))
+                punitorios = float("{0:.2f}".format(punitorios + val['punitorios']))
 
                 cuotas_cobradas.append((4, cuota.id, None))
                 cuota.ultima_fecha_cobro_cuota = self.fecha
                 resto = float("{0:.2f}".format(monto - cuota.saldo_cuota))
                 _logger.error("resto : %r", resto)
+                _logger.error("monto : %r", monto)
+                _logger.error("cuota.saldo_cuota : %r", cuota.saldo_cuota)
                 if resto >= 0:
                     if cuota.cobrado_cuota > 0:
 

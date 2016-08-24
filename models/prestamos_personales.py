@@ -29,6 +29,7 @@ from operator import itemgetter
 from openerp.exceptions import UserError
 from openerp.exceptions import ValidationError
 from openerp import models
+from openerp import SUPERUSER_ID
 import pprint
 import logging
 from openerp.osv import orm
@@ -69,6 +70,7 @@ class prestamo_plan(osv.Model):
         'journal_id': fields.many2one('account.journal', 'Diario ventas/ingresos', domain="[('type', '=', 'sale')]", required=True),
         'journal_otros_ingresos_id': fields.many2one('account.journal', 'Diario otros ingresos', domain="[('type', '=', 'sale')]", required=True),
         'cuenta_iva_id': fields.many2one('account.account', 'Cuenta IVA credito', required=True),
+        'invoice':fields.boolean('Emitir factura'),
         'comision_de_apertura': fields.float("Comision de apertura (%)", help="Aplicado sobre monto otorgado.", digits=(16,3)),
         'gastos_de_gestion': fields.float("Gaston de gestion", help="Es el monto de gastos de gestion, el cual disminuye el monto otorgado al cliente."),
     }
@@ -264,61 +266,77 @@ class prestamo_prestamo(osv.Model):
         periodos = self.prestamo_plan_id.cuotas
 
         tasa_de_interes_periodo = 0
+        dias_periodo = 0
         if self.prestamo_plan_id.dias_entre_vencimientos_select == 'mensual':
             tasa_de_interes_periodo = tasa_de_interes_mensual
+            dias_periodo = 30
         elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'quincenal':
-            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * 15
+            dias_periodo = 15
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * dias_periodo
         elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'semanal':
-            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * 7
+            dias_periodo = 7
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * dias_periodo
         elif self.prestamo_plan_id.dias_entre_vencimientos_select == 'dias':
-            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * self.prestamo_plan_id.dias_entre_vencimientos
+            dias_periodo = self.prestamo_plan_id.dias_entre_vencimientos
+            tasa_de_interes_periodo = (tasa_de_interes_mensual / 30) * dias_periodo
+
 
         #Obtenemos el tax de la compania
+        config_account = self.pool.get('account.tax')
+        _logger.error("config_account: %r", config_account)
         cr = self.env.cr
         uid = self.env.uid
-        company_id = self.env['res.users'].browse(self.env.uid).company_id.id
-        ir_values = self.pool.get('ir.values')
-        taxes_id = ir_values.get_default(cr, uid, 'product.product', 'taxes_id', company_id=company_id)
-        _logger.error("ir_values: %r", ir_values)
+        config_account_id = config_account.search(cr, uid, [('type_tax_use', '=', 'sale'), ('amount', '>', 0)])
+        _logger.error("config_account_id: %r", config_account_id)
+        for conf in config_account_id:
+            conf_obj = config_account.browse(cr, uid, conf, context=None)
+            _logger.error("conf default_sale_tax_id: %r", conf_obj.name)
+
 
         if self.prestamo_plan_id.tipo_de_amortizacion == 'sistema_directa':
             #Calculamos el capital de la cuota - igual para todas las cuotas
             capital_cuota = float("{0:.2f}".format(capital_total / periodos))
             diferencia_centavos = float("{0:.2f}".format((capital_cuota * periodos) - capital_total))
             
-            
             #Calculamos el interes - igual para todas las cuotas
 
-            #Calculamos el posible interes adicional de la primer cuota
-#            fecha_inicial = datetime.strptime(str(self.fecha), "%Y-%m-%d")
-#            fecha_final = datetime.strptime(str(self.fecha_primer_vencimiento), "%Y-%m-%d")
-#            diferencia = fecha_final - fecha_inicial
-#            interes_cuota = 
-
-
-
             if self.prestamo_plan_id.iva_incluido:
-
                 interes_cuota = float("{0:.2f}".format((((tasa_de_interes_periodo * periodos) * capital_total) / periodos) / 1.21))
             else:
                 interes_cuota = float("{0:.2f}".format(((tasa_de_interes_periodo * periodos) * capital_total) / periodos))
-            _logger.error("interes_cuota: %r", interes_cuota)
-            _logger.error("interes_cuota * periodos: %r", interes_cuota * periodos)
-            _logger.error("interes_cuota: %r", interes_cuota)
+
+            interes_adicional_cuota = 0
+            iva_adicional_cuota = 0
             i = 0
             while i < periodos:
                 #Calculamos la diferencia en centavos del capital_cuota de la primer cuota
                 if i == 0:
                     capital_cuota = capital_cuota - diferencia_centavos
+                    
+                    #Calculamos el posible interes adicional de la primer cuota
+                    fecha_inicial = datetime.strptime(str(self.fecha), "%Y-%m-%d")
+                    fecha_final = datetime.strptime(str(self.fecha_primer_vencimiento), "%Y-%m-%d")
+                    diferencia = fecha_final - fecha_inicial
+                    dias_adicionales_primer_cuota = diferencia.days - dias_periodo
+                    if dias_adicionales_primer_cuota > 0:
+                        _logger.error("dias_adicionales_primer_cuota: %r", dias_adicionales_primer_cuota)
+                        interes_adicional_cuota = (float("{0:.2f}".format(dias_adicionales_primer_cuota)) / float("{0:.2f}".format(dias_periodo))) * interes_cuota
+                        _logger.error("dias_adicionales_primer_cuota / dias_periodo: %r", dias_adicionales_primer_cuota / dias_periodo)
+                        _logger.error("dias_periodo: %r", dias_periodo)
+                        _logger.error("interes_adicional_cuota: %r", interes_adicional_cuota)
+                        iva_adicional_cuota = interes_adicional_cuota * 0.21
+                        _logger.error("iva_adicional_cuota: %r", iva_adicional_cuota)
                 else:
                     capital_cuota = float("{0:.2f}".format(capital_total / periodos))
+                    interes_adicional_cuota = 0
+                    iva_adicional_cuota = 0
 
                 #Calculamos el capital_saldo - disminuye conforme avanzan las cuotas
                 capital_saldo = capital_total - capital_cuota * i
 
                 #Calculamos el iva cuota - sobre el interes - igual para todas las cuotas
                 iva_cuota = float("{0:.2f}".format(interes_cuota * 0.21))
-                ret.append((capital_saldo, capital_cuota, interes_cuota, iva_cuota))
+                ret.append((capital_saldo, capital_cuota, interes_cuota+interes_adicional_cuota, iva_cuota+iva_adicional_cuota))
                 i = i + 1
 
         return ret
@@ -554,6 +572,8 @@ class prestamo_recibo(osv.Model):
         'prestamo_cuota_ids': fields.one2many("prestamo.cuota", 'prestamo_recibo_id',"Cuota"),
         'detalle': fields.text("Detalle", readonly=True),
         'prestamo_cuenta_id': fields.many2one("prestamo.cuenta", "Cuenta", required=True),
+        'invoice':fields.boolean('Emitir factura'),
+        'invoice_id':fields.many2one('account.invoice', 'Factura', readonly=True),        
         'move_id': fields.many2one("account.move", "Asiento", readonly=True),
     }
 
@@ -582,6 +602,7 @@ class prestamo_recibo(osv.Model):
         rec.update({
             'monto': float("{0:.2f}".format(abs(total_amount))),
             'prestamo_cuenta_id': cuotas[0].prestamo_prestamo_id.prestamo_cuenta_id.id,
+            'invoice': cuotas[0].prestamo_prestamo_id.prestamo_plan_id.invoice,
         })
         return rec
 
@@ -667,6 +688,37 @@ class prestamo_recibo(osv.Model):
             move.state = 'posted'
             self.move_id = move.id
 
+            if self.invoice:
+
+                account_invoice_obj = self.env['account.invoice']
+                # Create invoice line
+                ail = {
+                    'name': "Intereses por prestamo.",
+                    'quantity':1,
+                    'price_unit': intereses_cobrados,
+                    'account_id': prestamo.prestamo_plan_id.journal_id.default_debit_account_id.id,
+                }
+
+                account_invoice_customer0 = account_invoice_obj.sudo(self.env.uid).create(dict(
+                    name=move_name,
+                    date=self.fecha,
+                    reference_type="none",
+                    type="out_invoice",
+                    reference=False,
+                    #payment_term_id=self.payment_term.id,
+                    journal_id=prestamo.prestamo_plan_id.journal_id.id,
+                    partner_id=self.prestamo_cuenta_id.cliente_id.id,
+                    move_id=move.id,
+                    #residual=self.gasto_interes_liquidacion,
+                    #residual_company_signed=self.gasto_interes_liquidacion,
+                    #residual_signed=self.gasto_interes_liquidacion,
+                    account_id=self.journal_id.id,
+                    invoice_line_ids=[(0, 0, ail)]
+                ))
+                account_invoice_customer0.signal_workflow('invoice_open')
+                #account_invoice_customer0.reconciled = True
+                account_invoice_customer0.state = 'paid'
+                self.invoice_id = account_invoice_customer0.id
 
         return move
 

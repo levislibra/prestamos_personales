@@ -3,7 +3,7 @@
     <data>
 
 
-    <!-- Firmante - Formulario de creacion -->
+    <!-- Prestamo - Formulario de creacion -->
 
     <record id="prestamo_tipo_tree" model="ir.ui.view">
         <field name="name">prestamo.tipo.tree</field>
@@ -87,12 +87,12 @@
                         <field name="iva_incluido"/>
                         <field name="proporcional_primer_cuota"/>
                         <field name="tipo_de_amortizacion"/>
-                        <field name="dia_diferimiento_cuota"/>
                         <field name="comision_de_apertura"/>
                         <field name="gastos_de_gestion"/>
                         <field name="journal_id"/>
                         <field name="journal_otros_ingresos_id"/>
                         <field name="cuenta_iva_id"/>
+                        <field name="invoice"/>                        
                     </group>
                 </sheet>
             </form>
@@ -120,7 +120,7 @@
                 <field name="limite_credito"/>
                 <field name="ingresos_comprobables"/>
                 <field name="especificacion_laboral"/>
-                <field name="active"/>
+                <!--<field name="active"/>  -->
                 <field name="Saldo"/>
             </tree>
         </field>
@@ -136,7 +136,7 @@
                     <field name="state" widget="statusbar"/>
                 </header>
                 <sheet>
-                <div name="button_box" position="inside" align="right">
+                    <div name="button_box" position="inside" align="right">
                         <button type="action"
                             class="oe_stat_button"
                             id="cuotas_pendientes"
@@ -499,6 +499,8 @@
                         <group>
                             <field name="journal_id" widget="selection"/>
                             <field name="monto"/>
+                            <field name="invoice"/>
+                            <field name="invoice_id" attrs="{'invisible': [('invoice', '=', False)]}"/>
                         </group>
                         <group>
                             <field name="fecha"/>

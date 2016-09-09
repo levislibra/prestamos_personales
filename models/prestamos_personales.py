@@ -31,11 +31,15 @@ from openerp.exceptions import ValidationError
 from openerp import models
 from openerp import SUPERUSER_ID
 import pprint
+from openerp.tools import amount_to_text_en, float_round
+import amount_to_text_es_MX
+import math
 import logging
+
 from openerp.osv import orm
 
 _logger = logging.getLogger(__name__)
-#       _logger.error("date now : %r", date_now)
+#_logger.error("date now : %r", date_now)
 
 class prestamo_tipo(osv.Model):
     _name = 'prestamo.tipo'
@@ -43,6 +47,9 @@ class prestamo_tipo(osv.Model):
     _columns = {
         'name': fields.char("Nombre", size=64, required=True),
         'active': fields.boolean("Activo"),
+        'prestamo_mutuo_id': fields.many2one("prestamo.documentacion", "Mutuo"),
+        'prestamo_pagare_id': fields.many2one("prestamo.documentacion", "Pagare"),
+        'prestamo_cobro_cuota_id': fields.many2one("prestamo.documentacion", "Comprobante de cobro"),
     }
     _defaults = {
         'active': True,
@@ -57,19 +64,20 @@ class prestamo_plan(osv.Model):
 		'codigo': fields.char("Codigo", size=8, required=True),
         'tipo': fields.many2one('prestamo.tipo', 'Tipo', required=True),
         'active': fields.boolean("Activo"),
-        'recibo_de_sueldo': fields.boolean("Requiere recibo de sueldo?", required=True),
+        'recibo_de_sueldo': fields.boolean("Requiere recibo de sueldo?"),
         'cuotas': fields.integer("Cuotas", required=True),
         'tasa_de_interes': fields.float("Tasa de interes mensual", required=True, digits=(16,3)),
         'tasa_de_punitorios': fields.float("Tasa de punitorios mensual", required=True, digits=(16,3)),
         'dias_de_gracia_punitorios': fields.integer("Dias de gracia para punitorios", required=True),
         'dias_entre_vencimientos_select': fields.selection([('mensual', 'Mensual'), ('dias', 'Cantidad de dias')], string='Dias entre vencimientos', required=True, select=True),
         'dias_entre_vencimientos': fields.integer("Dias entre vencimientos", required=True),
+        'iva_id': fields.many2one("account.tax", "Impuesto por defecto", domain="[('active', '=', True), ('type_tax_use', '=', 'sale')]", required=True),
         'iva_incluido': fields.boolean("IVA incluido en tasa de interes?"),
-        'proporcional_primer_cuota': fields.boolean("Interes proporcional en primer cuota", required=True),
-        'tipo_de_amortizacion': fields.selection([('sistema_directa', 'Sistema de tasa directa'), ('sistema_frances', 'Sistema frances'), ('sistema_aleman', 'Sistema aleman'), ('sistema_americano', 'Sistema americano')], string='Sistema de tasa', required=True, select=True,),
+        'proporcional_primer_cuota': fields.boolean("Interes proporcional en primer cuota"),
+        'tipo_de_amortizacion': fields.selection([('sistema_directa', 'Sistema de tasa directa'), ('sistema_frances', 'Sistema frances'), ('sistema_aleman', 'Sistema aleman'), ('sistema_americano', 'Sistema americano')], string='Sistema de tasa', required=True, select=True),
         'journal_id': fields.many2one('account.journal', 'Diario ventas/ingresos', domain="[('type', '=', 'sale')]", required=True),
         'journal_otros_ingresos_id': fields.many2one('account.journal', 'Diario otros ingresos', domain="[('type', '=', 'sale')]", required=True),
-        'cuenta_iva_id': fields.many2one('account.account', 'Cuenta IVA credito', required=True),
+        #'cuenta_iva_id': fields.many2one('account.account', 'Cuenta IVA credito', required=True),
         'invoice':fields.boolean('Emitir factura'),
         'comision_de_apertura': fields.float("Comision de apertura (%)", help="Aplicado sobre monto otorgado.", digits=(16,3)),
         'gastos_de_gestion': fields.float("Gaston de gestion", help="Es el monto de gastos de gestion, el cual disminuye el monto otorgado al cliente."),
@@ -95,7 +103,7 @@ class prestamo_cuota(osv.Model):
         'capital_cuota': fields.float("Capital", required=True),
         'interes_cuota': fields.float("Interes", required=True),
         'iva_cuota': fields.float("IVA", required=True),
-        'punitorios_cuota': fields.float("Punitorios", readonly=True),
+        'punitorios_cuota': fields.float("Punitorios"),
         'monto_cuota': fields.float("Total cuota", compute="_compute_monto_cuota", readonly=True),
         'cobrado_cuota': fields.float("Cobrado"),
         'saldo_cuota': fields.float("Saldo cuota", compute="_compute_monto_cuota", readonly=True),
@@ -129,7 +137,6 @@ class prestamo_cuota(osv.Model):
                 cobrado['punitorios'] = min(self.punitorios_cuota, monto_previo)
                 monto_previo = float("{0:.2f}".format(monto_previo - cobrado['punitorios']))
 
-
         if monto > 0:
             ret['capital'] = min(self.capital_cuota-cobrado['capital'], monto)
             monto = monto - ret['capital']
@@ -150,19 +157,14 @@ class prestamo_cuota(osv.Model):
     def compute_name(self):
         self.display_name = "[Prestamo: " + self.prestamo_prestamo_id.display_name + ", cuota: " + str(self.numero_cuota) + "]"
 
-    @api.model
-    def actualizar_punitorios(self):
-        _logger.error("Actualizar punitorios ##########################")
-        cuotas_obj = self.pool.get('prestamo.cuota')
-        cr = self.env.cr
-        uid = self.env.uid
-        cuotas_obj_ids = cuotas_obj.search(cr, uid, [('state', '=', 'activa')])
-        #cuotas_obj_ids = cuotas_obj.search(cr, uid, [('state', '=', 'activa'), ('fecha_vencimiento', '<', time.strftime('%Y-%m-%d'))])
-        _logger.error("cuotas: %r", cuotas_obj_ids)
-        for cuota_id in cuotas_obj_ids:
-            cuota = cuotas_obj.browse(cr, uid, cuota_id, context=None)
-            _logger.error("cuota.monto: %r", cuota.monto_cuota)
-            cuota.punitorios_cuota = cuota.punitorios_cuota + 10
+    @api.one
+    def actpunitorios(self, cr):
+        fecha_inicial = datetime.strptime(str(self.fecha_vencimiento), "%Y-%m-%d")
+        fecha_final = datetime.strptime(str(time.strftime("%Y-%m-%d")), "%Y-%m-%d")
+        diferencia = fecha_final - fecha_inicial
+        monto = self.capital_cuota + self.interes_cuota + self.iva_cuota
+        if diferencia.days > self.prestamo_prestamo_id.prestamo_plan_id.dias_de_gracia_punitorios:
+            self.punitorios_cuota = monto * diferencia.days * (self.prestamo_prestamo_id.prestamo_plan_id.tasa_de_punitorios / 30)
 
     @api.one
     @api.depends('capital_cuota', 'interes_cuota', 'iva_cuota', 'punitorios_cuota', 'cobrado_cuota')
@@ -180,12 +182,20 @@ class prestamo_prestamo(osv.Model):
         'fecha': fields.date("Fecha", required=True),
         'display_name': fields.char("Prestamo", compute="_compute_display_name"),
         'fecha_primer_vencimiento': fields.date("Fecha primer vencimiento", required=True),
-        'monto_otorgado': fields.float("Monto Otorgado", required=True),
+        'monto_otorgado': fields.float("Monto a Financiar", required=True),
         'prestamo_cuenta_id': fields.many2one("prestamo.cuenta", "Cuenta", required=True),
         'prestamo_plan_id': fields.many2one("prestamo.plan", "Plan de pagos", required=True),
         'prestamo_cuota_ids': fields.one2many("prestamo.cuota", "prestamo_prestamo_id", "Cuotas", ondelete='cascade'),
         'state': fields.selection([('borrador', 'Borrador'), ('confirmado', 'Confirmado'), ('pagado', 'Pagado'), ('cancelado', 'Cancelado')], string='Estado', readonly=True),
         'prestamo_pago_id': fields.many2one("prestamo.pago", "Comprobante de pago", readonly=True),
+        'prestamo_mutuo_text': fields.html("Mutuo"),
+        'prestamo_pagare_text': fields.html("Pagare"),
+    }
+
+    _defaults = {
+        'fecha': lambda *a: time.strftime('%Y-%m-%d'),
+        'fecha_primer_vencimiento': lambda *a: time.strftime('%Y-%m-%d'),
+        'state': "borrador",
     }
 
     @api.one
@@ -194,21 +204,104 @@ class prestamo_prestamo(osv.Model):
         if self.prestamo_plan_id != False:
             self.display_name = "Prestamo " + str(self.id) + " - " + self.prestamo_plan_id.name
 
-    _defaults = {
-        'fecha': lambda *a: time.strftime('%Y-%m-%d'),
-        'fecha_primer_vencimiento': lambda *a: time.strftime('%Y-%m-%d'),
-        'state': "borrador",
-    }
+    @api.one
+    @api.constrains('monto_otorgado')
+    def _monto_otorgado_check(self):
+        saldo_adeudado = self.prestamo_cuenta_id._saldo_adeudado()
+        if self.prestamo_cuenta_id.limite_credito < saldo_adeudado + self.monto_otorgado:
+            maximo = self.prestamo_cuenta_id.limite_credito - saldo_adeudado
+            raise UserError(_("El monto a financiar supera el limite para este cliente. El maximo a financiar es de $%d") % maximo)
+
+    def _monto_total_adeudado(self):
+        total = 0
+        for cuota in self.prestamo_cuota_ids:
+            total += cuota.monto_cuota
+        return total
+
+    @api.one
+    def actmutuo(self, cr):
+        if self.prestamo_plan_id.tipo.prestamo_mutuo_id != False and self.prestamo_plan_id.tipo.prestamo_mutuo_id.content != False:
+            self._cargar_mutuo(self.prestamo_plan_id.tipo.prestamo_mutuo_id.content)
+
+    def _cargar_mutuo(self, str_mutuo_text):
+        text_default = '________________'
+        list_values_remplace = {
+            '$compania_nombre$': self.env['res.users'].browse(self.env.uid).company_id.name or text_default,
+            '$compania_direccion$': self.env['res.users'].browse(self.env.uid).company_id.street or text_default,
+            '$compania_ciudad$': self.env['res.users'].browse(self.env.uid).company_id.city or text_default,
+            '$compania_provincia$': self.env['res.users'].browse(self.env.uid).company_id.state_id.name or text_default,
+            '$compania_zip$': self.env['res.users'].browse(self.env.uid).company_id.zip or text_default,
+            '$compania_pais$': self.env['res.users'].browse(self.env.uid).company_id.country_id.name or text_default,
+            '$compania_cuit$': self.env['res.users'].browse(self.env.uid).company_id.company_registry or text_default,
+            '$cliente_nombre$': self.prestamo_cuenta_id.cliente_id.name or text_default,
+            '$cliente_direccion$': self.prestamo_cuenta_id.cliente_id.street or text_default,
+            '$cliente_ciudad$': self.prestamo_cuenta_id.cliente_id.city or text_default,
+            '$cliente_provincia$': self.prestamo_cuenta_id.cliente_id.state_id.name or text_default,
+            '$cliente_codigo_postal$': self.prestamo_cuenta_id.cliente_id.zip or text_default,
+            '$cliente_pais$': self.prestamo_cuenta_id.cliente_id.country_id.name or text_default,
+            '$cliente_dni$': self.prestamo_cuenta_id.cliente_dni or text_default,
+            '$prestamo_fecha_primer_vencimiento$': str(self.fecha_primer_vencimiento) or text_default,
+            '$prestamo_fecha$': str(self.fecha) or text_default,
+            '$prestamo_monto_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self.monto_otorgado, 'centavos', 'pesos con ') or text_default,
+            '$prestamo_monto$': str(self.monto_otorgado) or text_default,
+            '$prestamo_cuotas$': str(self.prestamo_plan_id.cuotas) or text_default,
+            '$prestamo_total_adeudado_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self._monto_total_adeudado(), 'centavos', 'pesos con ') or text_default,
+            '$prestamo_total_adeudado$': str(self._monto_total_adeudado()) or text_default,
+            '$cuota_monto_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self.prestamo_cuota_ids[0].monto_cuota, 'centavos', 'pesos con ') or text_default,
+            '$cuota_monto$': str(self.prestamo_cuota_ids[0].monto_cuota) or text_default,
+        }
+
+        for value in list_values_remplace:
+            str_mutuo_text = str_mutuo_text.replace(value, list_values_remplace[value])
+        self.prestamo_mutuo_text = str_mutuo_text
+
+    @api.one
+    def actpagare(self, cr):
+        if self.prestamo_plan_id.tipo.prestamo_pagare_id != False and self.prestamo_plan_id.tipo.prestamo_pagare_id.content != False:
+            self._cargar_pagare(self.prestamo_plan_id.tipo.prestamo_pagare_id.content)
+
+    def _cargar_pagare(self, str_pagare_text):
+        str_ret = ""
+        text_default = '________________'
+        list_values_remplace = {
+            '$compania_nombre$': self.env['res.users'].browse(self.env.uid).company_id.name or text_default,
+            '$compania_direccion$': self.env['res.users'].browse(self.env.uid).company_id.street or text_default,
+            '$compania_ciudad$': self.env['res.users'].browse(self.env.uid).company_id.city or text_default,
+            '$compania_provincia$': self.env['res.users'].browse(self.env.uid).company_id.state_id.name or text_default,
+            '$compania_zip$': self.env['res.users'].browse(self.env.uid).company_id.zip or text_default,
+            '$compania_pais$': self.env['res.users'].browse(self.env.uid).company_id.country_id.name or text_default,
+            '$compania_cuit$': self.env['res.users'].browse(self.env.uid).company_id.company_registry or text_default,
+            '$cliente_nombre$': self.prestamo_cuenta_id.cliente_id.name or text_default,
+            '$cliente_direccion$': self.prestamo_cuenta_id.cliente_id.street or text_default,
+            '$cliente_ciudad$': self.prestamo_cuenta_id.cliente_id.city or text_default,
+            '$cliente_provincia$': self.prestamo_cuenta_id.cliente_id.state_id.name or text_default,
+            '$cliente_codigo_postal$': self.prestamo_cuenta_id.cliente_id.zip or text_default,
+            '$cliente_pais$': self.prestamo_cuenta_id.cliente_id.country_id.name or text_default,
+            '$cliente_dni$': self.prestamo_cuenta_id.cliente_dni or text_default,
+            '$prestamo_fecha_primer_vencimiento$': str(self.fecha_primer_vencimiento) or text_default,
+            '$prestamo_fecha$': str(self.fecha) or text_default,
+            '$prestamo_monto_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self.monto_otorgado, 'centavos', 'pesos con ') or text_default,
+            '$prestamo_monto$': str(self.monto_otorgado) or text_default,
+            '$prestamo_cuotas$': str(self.prestamo_plan_id.cuotas) or text_default,
+            '$prestamo_total_adeudado_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self._monto_total_adeudado(), 'centavos', 'pesos con ') or text_default,
+            '$prestamo_total_adeudado$': str(self._monto_total_adeudado()) or text_default,
+            '$cuota_monto_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self.prestamo_cuota_ids[0].monto_cuota, 'centavos', 'pesos con ') or text_default,
+            '$cuota_monto$': str(self.prestamo_cuota_ids[0].monto_cuota) or text_default,
+        }
+        for value in list_values_remplace:
+            str_pagare_text = str_pagare_text.replace(value, list_values_remplace[value])
+        self.prestamo_pagare_text = str_pagare_text
+
 
     @api.multi
     def confirmar(self):
         if self.prestamo_cuota_ids and len(self.prestamo_cuota_ids) >= 1:
             self.state = "confirmado"
-
-    @api.multi
-    def confirmar(self):
-        if self.prestamo_cuota_ids and len(self.prestamo_cuota_ids) >= 1:
-            self.state = "confirmado"
+            if self.prestamo_plan_id.tipo.prestamo_mutuo_id != False and self.prestamo_plan_id.tipo.prestamo_mutuo_id.content != False:
+                self._cargar_mutuo(self.prestamo_plan_id.tipo.prestamo_mutuo_id.content)
+            
+            if self.prestamo_plan_id.tipo.prestamo_pagare_id != False and self.prestamo_plan_id.tipo.prestamo_pagare_id.content != False:
+                self._cargar_pagare(self.prestamo_plan_id.tipo.prestamo_pagare_id.content)
 
     @api.multi
     def pagar(self):
@@ -283,15 +376,11 @@ class prestamo_prestamo(osv.Model):
 
         #Obtenemos el tax de la compania
         config_account = self.pool.get('account.tax')
-        _logger.error("config_account: %r", config_account)
         cr = self.env.cr
         uid = self.env.uid
         config_account_id = config_account.search(cr, uid, [('type_tax_use', '=', 'sale'), ('amount', '>', 0)])
-        _logger.error("config_account_id: %r", config_account_id)
         for conf in config_account_id:
             conf_obj = config_account.browse(cr, uid, conf, context=None)
-            _logger.error("conf default_sale_tax_id: %r", conf_obj.name)
-
 
         if self.prestamo_plan_id.tipo_de_amortizacion == 'sistema_directa':
             #Calculamos el capital de la cuota - igual para todas las cuotas
@@ -301,7 +390,8 @@ class prestamo_prestamo(osv.Model):
             #Calculamos el interes - igual para todas las cuotas
 
             if self.prestamo_plan_id.iva_incluido:
-                interes_cuota = float("{0:.2f}".format((((tasa_de_interes_periodo * periodos) * capital_total) / periodos) / 1.21))
+                iva = 1 + (self.prestamo_plan_id.iva_id.amount / 100)
+                interes_cuota = float("{0:.2f}".format((((tasa_de_interes_periodo * periodos) * capital_total) / periodos) / iva))
             else:
                 interes_cuota = float("{0:.2f}".format(((tasa_de_interes_periodo * periodos) * capital_total) / periodos))
 
@@ -319,13 +409,8 @@ class prestamo_prestamo(osv.Model):
                     diferencia = fecha_final - fecha_inicial
                     dias_adicionales_primer_cuota = diferencia.days - dias_periodo
                     if dias_adicionales_primer_cuota > 0:
-                        _logger.error("dias_adicionales_primer_cuota: %r", dias_adicionales_primer_cuota)
                         interes_adicional_cuota = (float("{0:.2f}".format(dias_adicionales_primer_cuota)) / float("{0:.2f}".format(dias_periodo))) * interes_cuota
-                        _logger.error("dias_adicionales_primer_cuota / dias_periodo: %r", dias_adicionales_primer_cuota / dias_periodo)
-                        _logger.error("dias_periodo: %r", dias_periodo)
-                        _logger.error("interes_adicional_cuota: %r", interes_adicional_cuota)
-                        iva_adicional_cuota = interes_adicional_cuota * 0.21
-                        _logger.error("iva_adicional_cuota: %r", iva_adicional_cuota)
+                        iva_adicional_cuota = interes_adicional_cuota * (self.prestamo_plan_id.iva_id.amount / 100)
                 else:
                     capital_cuota = float("{0:.2f}".format(capital_total / periodos))
                     interes_adicional_cuota = 0
@@ -335,7 +420,7 @@ class prestamo_prestamo(osv.Model):
                 capital_saldo = capital_total - capital_cuota * i
 
                 #Calculamos el iva cuota - sobre el interes - igual para todas las cuotas
-                iva_cuota = float("{0:.2f}".format(interes_cuota * 0.21))
+                iva_cuota = float("{0:.2f}".format(interes_cuota * (self.prestamo_plan_id.iva_id.amount / 100)))
                 ret.append((capital_saldo, capital_cuota, interes_cuota+interes_adicional_cuota, iva_cuota+iva_adicional_cuota))
                 i = i + 1
 
@@ -354,7 +439,6 @@ class prestamo_prestamo(osv.Model):
             cuota_ids = []
             i = 0            
             fecha_valores = self.caclular_fechas_de_vencimientos()
-            _logger.error("Fechas de vencimientos: %r", fecha_valores)
             elementos_cuotas = self.caclular_elementos_cuotas()
             while i < self.prestamo_plan_id.cuotas:
                 fecha_vencimiento = fecha_valores[i]
@@ -570,10 +654,12 @@ class prestamo_recibo(osv.Model):
         'monto': fields.float("Monto", required=True),
         'journal_id': fields.many2one('account.journal', string="Metodo de Cobro", required=True, domain="[('type', 'in', ('bank', 'cash'))]"),
         'prestamo_cuota_ids': fields.one2many("prestamo.cuota", 'prestamo_recibo_id',"Cuota"),
+        'prestamo_comprobante_de_pago_text': fields.html("Comprobante"),
         'detalle': fields.text("Detalle", readonly=True),
         'prestamo_cuenta_id': fields.many2one("prestamo.cuenta", "Cuenta", required=True),
         'invoice':fields.boolean('Emitir factura'),
-        'invoice_id':fields.many2one('account.invoice', 'Factura', readonly=True),        
+        'invoice_id':fields.many2one('account.invoice', 'Factura', readonly=True),
+        'iva_id': fields.many2one("account.tax", "Impuesto", domain="[('active', '=', True), ('type_tax_use', '=', 'sale')]"),
         'move_id': fields.many2one("account.move", "Asiento", readonly=True),
     }
 
@@ -603,6 +689,7 @@ class prestamo_recibo(osv.Model):
             'monto': float("{0:.2f}".format(abs(total_amount))),
             'prestamo_cuenta_id': cuotas[0].prestamo_prestamo_id.prestamo_cuenta_id.id,
             'invoice': cuotas[0].prestamo_prestamo_id.prestamo_plan_id.invoice,
+            'iva_id': cuotas[0].prestamo_prestamo_id.prestamo_plan_id.iva_id.id,
         })
         return rec
 
@@ -623,10 +710,6 @@ class prestamo_recibo(osv.Model):
     def crear_move_cobro(self, prestamo, capital, interes, iva, punitorios):
         move = None
         company_id = self.env['res.users'].browse(self.env.uid).company_id.id
-        _logger.error("capital : %r", capital)
-        _logger.error("interes : %r", interes)
-        _logger.error("iva : %r", iva)
-        _logger.error("punitorios : %r", punitorios)
         if True:
             #list of move line
             line_ids = []
@@ -656,7 +739,7 @@ class prestamo_recibo(osv.Model):
             # Acredito el IVA a pagar - cuenta a pagar
             aml3 = {
                 'date': self.fecha,
-                'account_id': prestamo.prestamo_plan_id.cuenta_iva_id.id,
+                'account_id': prestamo.prestamo_plan_id.iva_id.account_id.id,
                 'name': 'Prestamo - IVA cobrado',
                 'partner_id': self.prestamo_cuenta_id.cliente_id.id,
                 'credit': iva,
@@ -675,7 +758,7 @@ class prestamo_recibo(osv.Model):
             }
             line_ids.append((0,0,aml4))
 
-            move_name = "Prestamo/Cobro"
+            move_name = "Prestamo/Cobro/" + str(self.id)
             move = self.env['account.move'].create({
                 'name': move_name,
                 'date': self.fecha,
@@ -697,6 +780,7 @@ class prestamo_recibo(osv.Model):
                     'quantity':1,
                     'price_unit': intereses_cobrados,
                     'account_id': prestamo.prestamo_plan_id.journal_id.default_debit_account_id.id,
+                    'invoice_line_tax_ids':[(6,0,[self.iva_id.id])],
                 }
 
                 account_invoice_customer0 = account_invoice_obj.sudo(self.env.uid).create(dict(
@@ -746,9 +830,6 @@ class prestamo_recibo(osv.Model):
                 cuotas_cobradas.append((4, cuota.id, None))
                 cuota.ultima_fecha_cobro_cuota = self.fecha
                 resto = float("{0:.2f}".format(monto - cuota.saldo_cuota))
-                _logger.error("resto : %r", resto)
-                _logger.error("monto : %r", monto)
-                _logger.error("cuota.saldo_cuota : %r", cuota.saldo_cuota)
                 if resto >= 0:
                     if cuota.cobrado_cuota > 0:
 
@@ -766,7 +847,43 @@ class prestamo_recibo(osv.Model):
         self.prestamo_cuota_ids = cuotas_cobradas
         self.detalle = detalle
         self.crear_move_cobro(prestamo, capital, interes, iva, punitorios)
+        if self.prestamo_cuota_ids[0].prestamo_prestamo_id.prestamo_plan_id.tipo.prestamo_cobro_cuota_id != False:
+                self._cargar_comprobante(self.prestamo_cuota_ids[0].prestamo_prestamo_id.prestamo_plan_id.tipo.prestamo_cobro_cuota_id.content)
+
         return {'type': 'ir.actions.act_window_close'}
+
+    @api.one
+    def webon(self, cr):
+        if self.prestamo_cuota_ids[0].prestamo_prestamo_id.prestamo_plan_id.tipo.prestamo_cobro_cuota_id != False and self.prestamo_cuota_ids[0].prestamo_prestamo_id.prestamo_plan_id.tipo.prestamo_cobro_cuota_id.content != False:
+                self._cargar_comprobante(self.prestamo_cuota_ids[0].prestamo_prestamo_id.prestamo_plan_id.tipo.prestamo_cobro_cuota_id.content)
+
+    def _cargar_comprobante(self, str_comprobante_text):
+        str_ret = ""
+        text_default = '________________'
+        list_values_remplace = {
+            '$compania_nombre$': self.env['res.users'].browse(self.env.uid).company_id.name or text_default,
+            '$compania_direccion$': self.env['res.users'].browse(self.env.uid).company_id.street or text_default,
+            '$compania_ciudad$': self.env['res.users'].browse(self.env.uid).company_id.city or text_default,
+            '$compania_provincia$': self.env['res.users'].browse(self.env.uid).company_id.state_id.name or text_default,
+            '$compania_zip$': self.env['res.users'].browse(self.env.uid).company_id.zip or text_default,
+            '$compania_pais$': self.env['res.users'].browse(self.env.uid).company_id.country_id.name or text_default,
+            '$compania_cuit$': self.env['res.users'].browse(self.env.uid).company_id.company_registry or text_default,
+            '$cliente_nombre$': self.prestamo_cuenta_id.cliente_id.name or text_default,
+            '$cliente_direccion$': self.prestamo_cuenta_id.cliente_id.street or text_default,
+            '$cliente_ciudad$': self.prestamo_cuenta_id.cliente_id.city or text_default,
+            '$cliente_provincia$': self.prestamo_cuenta_id.cliente_id.state_id.name or text_default,
+            '$cliente_codigo_postal$': self.prestamo_cuenta_id.cliente_id.zip or text_default,
+            '$cliente_pais$': self.prestamo_cuenta_id.cliente_id.country_id.name or text_default,
+            '$cliente_dni$': self.prestamo_cuenta_id.cliente_dni or text_default,
+            '$monto_pagado$': str(self.monto) or text_default,
+            '$monto_pagado_en_letras$': amount_to_text_es_MX.get_amount_to_text(self, self.monto, 'centavos', 'pesos con ') or text_default,
+            '$detalle$': str(self.detalle) or text_default,
+            '$numero_de_recibo$': str(self.id) or text_default,
+        }
+        for value in list_values_remplace:
+            str_comprobante_text = str_comprobante_text.replace(value, list_values_remplace[value])
+        self.prestamo_comprobante_de_pago_text = str_comprobante_text
+
 
 class prestamo_cuenta(osv.Model):
     _name = 'prestamo.cuenta'
@@ -775,6 +892,7 @@ class prestamo_cuenta(osv.Model):
     _columns = {
         'id': fields.integer("ID", readonly=True),
         'cliente_id': fields.many2one("res.partner", "Cliente", required=True),
+        'cliente_dni': fields.char("DNI", required=True),
         'recibo_de_sueldo': fields.boolean("Tiene recibo de sueldo?"),
         'limite_credito': fields.float("Maximo monto a otorgar"),
         'ingresos_comprobables': fields.float("Ingresos comprobables"),
@@ -789,6 +907,15 @@ class prestamo_cuenta(osv.Model):
         'Saldo': fields.float("Saldo", readonly=True),
     }
 
+
+    def _saldo_adeudado(self):
+        saldo_adeudado = 0
+        for prestamo in self.prestamo_prestamo_ids:
+            for cuota in prestamo.prestamo_cuota_ids:
+                if cuota.state != 'cobrada':
+                    saldo_adeudado += cuota.saldo_cuota
+        return saldo_adeudado
+
     def confirmar(self, cr, uid, ids, context=None):
         self.write(cr, uid, ids, {'state':'confirmado'}, context=None)
         return True
@@ -801,4 +928,16 @@ class prestamo_cuenta(osv.Model):
         'fecha_inicio_trabajo_actual': lambda *a: time.strftime('%Y-%m-%d'),
         'state': "borrador",
         'active': True,
+    }
+
+class prestamo_documentacion(osv.Model):
+    _name = 'prestamo.documentacion'
+    _description = 'Documentos relacionados a prestamos'
+    _columns = {
+        'name': fields.char('Nombre', required=True),
+        'values': fields.char('Valores a reemplazar', readonly=True),
+        'content': fields.html('Contenido'),
+    }
+    _defaults = {
+        'values': "$compania_nombre,$compania_ciudad,$compania_calle,$cliente_nombre,$cliente_direccion,$prestamo_fecha,$prestamo_monto,$prestamo_monto_en_letras,$prestamo_cuotas,$prestamo_fecha_primer_vencimiento,$prestamo_total_adeudado,$prestamo_total_adeudado_en_letras,$cuota_monto,cuota_monto_en_letras",
     }
